@@ -34,7 +34,7 @@ func (bot BotAPI) viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Данные: ", data)
 	// Отображение данных на веб-странице
-	tmpl, err := template.ParseFiles("index.html") // Путь к вашему HTML-шаблону
+	tmpl, err := template.ParseFiles("README.md") // Путь к вашему HTML-шаблону
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
