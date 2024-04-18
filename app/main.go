@@ -111,7 +111,7 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			msg.Text = "Привет, я бот для поиска попутчиков в любой системе каршеринга.\nПриятной экономии"
 			bot.API.Send(msg)
 
-		case "registration":
+		case "auth":
 			ok, err := bot.db.IsExists(ctx, update.Message.Chat.UserName)
 			if err != nil {
 				return errors.WithMessage(err, "is exists")
@@ -136,8 +136,11 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 				break
 			}
 
-		case "auth":
+		case "create_event":
 			bot.inlineContact(chatID)
+
+		case "find_ride":
+			continue
 		}
 
 	}
