@@ -40,8 +40,8 @@ func (bot BotAPI) requestContact(chatID int64) {
 
 // Проверка принятого контакта
 func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.Update, user entitiy.User) {
-	if update.Message.Contact != nil { // Проверяем, содержит ли сообщение контакт
-		if update.Message.Contact.UserID == update.Message.From.ID { // Проверяем действительно ли это контакт отправителя
+	if update.Message.Contact != nil {
+		if update.Message.Contact.UserID == update.Message.From.ID {
 			err := bot.db.Registration(ctx, user, update)
 			if err != nil {
 				return
@@ -49,9 +49,7 @@ func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Спасибо!")
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру
 			bot.API.Send(msg)
-			stickerID := tgbotapi.FileID("CAACAgIAAxkBAAEL3MtmEnBdKVlozRT-Lm9SdbTUFGwaKQACNRMAAq07CEgEFLhcMipUIDQE")
-			sticker := tgbotapi.NewSticker(update.Message.Chat.ID, stickerID)
-			_, err = bot.API.Send(sticker)
+			err = bot.SendSticker("CAACAgIAAxkBAAEL3MtmEnBdKVlozRT-Lm9SdbTUFGwaKQACNRMAAq07CEgEFLhcMipUIDQE", update)
 			if err != nil {
 				return
 			}
@@ -65,6 +63,17 @@ func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.
 		bot.API.Send(msg)
 		bot.requestContact(update.Message.Chat.ID)
 	}
+}
+
+func (bot BotAPI) SendSticker(stickerID string, update tgbotapi.Update) error {
+	stickerFile := tgbotapi.FileID(stickerID)
+
+	sticker := tgbotapi.NewSticker(update.Message.Chat.ID, stickerFile)
+	_, err := bot.API.Send(sticker)
+	if err != nil {
+		return errors.WithMessage(err, "sticker error")
+	}
+	return nil
 }
 
 func (bot BotAPI) inlineContact(chatID int64) {
@@ -81,12 +90,32 @@ func (bot BotAPI) inlineContact(chatID int64) {
 	bot.API.Send(msg)
 }
 
+func (bot BotAPI) geolocationRequest(chatID int64) {
+	btn := tgbotapi.NewKeyboardButtonLocation("запрос геолокации")
+	keyboard := tgbotapi.NewReplyKeyboard([]tgbotapi.KeyboardButton{btn})
+	msg := tgbotapi.NewMessage(chatID, "Отправьте вашу геолокацию")
+	msg.ReplyMarkup = keyboard
+	bot.API.Send(msg)
+}
+
+func (bot BotAPI) handleLocationUpdate(update tgbotapi.Update) error {
+	if update.Message.Location != nil {
+		latitude := update.Message.Location.Latitude
+		longitude := update.Message.Location.Longitude
+		log.Printf("latitude: %f, longitude: %f", latitude, longitude)
+		err := bot.db.UpsertLocation(update)
+		if err != nil {
+			return errors.WithMessage(err, "insert location error")
+		}
+	}
+	return nil
+}
+
 func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.API.GetUpdatesChan(u)
 	for update := range updates {
-
 		chatID := update.Message.Chat.ID
 		commands := update.Message.Command()
 		msg := tgbotapi.NewMessage(chatID, update.Message.Text)
@@ -96,15 +125,13 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			return errors.WithMessage(err, "is exists")
 		}
 		if !ok {
-			msg.Text = "Требуется регистрация"
-			bot.API.Send(msg)
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
 			bot.requestContact(chatID)
 			for u := range updates {
 				bot.checkRequestContactReply(ctx, u, user)
 				break
 			}
-			//continue
+			continue
 		}
 		switch commands {
 		case "start":
@@ -118,11 +145,9 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			}
 			if ok {
 				msg.Text = "Пользователь уже зарегистрирован"
-				stickerID := tgbotapi.FileID("CAACAgIAAxkBAAEL3MlmEm_CzZTbjq297QhPpvUjGIDQ8gACTBQAAuxLAUh_I_vdpHUhwzQE")
-				sticker := tgbotapi.NewSticker(chatID, stickerID)
-				_, err := bot.API.Send(sticker)
+				err = bot.SendSticker("CAACAgIAAxkBAAEL3MlmEm_CzZTbjq297QhPpvUjGIDQ8gACTBQAAuxLAUh_I_vdpHUhwzQE", update)
 				if err != nil {
-					return errors.WithMessage(err, "sticker")
+					return err
 				}
 				bot.API.Send(msg)
 				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
@@ -140,9 +165,14 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			bot.inlineContact(chatID)
 
 		case "find_ride":
-			continue
+			bot.geolocationRequest(chatID)
 		}
-
+		if update.Message.Location != nil {
+			err := bot.handleLocationUpdate(update)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -172,5 +202,4 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
-
 }

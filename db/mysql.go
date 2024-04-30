@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"database/sql" // Import SQL package for MySQL
 	_ "github.com/go-sql-driver/mysql"
@@ -18,14 +19,14 @@ import (
 )
 
 type DB struct {
-	Conn *sql.DB // Change to MySQL database connection
+	Conn *sql.DB
 }
 
 func NewDataBase(ctx context.Context, dsn string) (*DB, error) {
 	db, err := sql.Open("mysql", dsn) // Use MySQL driver and connection string
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v", err)
-		return nil, err
+		return nil, errors.WithMessage(err, "connection")
 	}
 	if err := db.Ping(); err != nil {
 		return nil, errors.WithMessage(err, "Error pinging database")
@@ -97,14 +98,32 @@ func (conn DB) IsExists(ctx context.Context, login string) (bool, error) {
 	return true, nil
 }
 
-//func (conn DB) UpdateNumber(ctx context.Context, user entitiy.User) error {
-//	query := `
-//       INSERT INTO users (chatid, phone) VALUES (?, ?)
-//       ON DUPLICATE KEY UPDATE phone = VALUES(phone)
-//   `
-//	_, err := conn.Conn.ExecContext(ctx, query, user.ChatID, user.Phone)
-//	if err != nil {
-//		return errors.WithMessage(err, "Error executing query")
-//	}
-//	return nil
-//}
+func (conn DB) UpsertLocation(update tgbotapi.Update) error {
+	userId, err := conn.getUserID(update)
+	if err != nil {
+		return err
+	}
+
+	query := `INSERT INTO user_location (user_id, latitude, longitude, created_at) 
+               VALUES (?, ?, ?, ?) 
+               ON DUPLICATE KEY UPDATE user_id = values(user_id)`
+
+	_, err = conn.Conn.ExecContext(context.Background(), query,
+		userId, update.Message.Location.Latitude, update.Message.Location.Longitude, time.Now())
+	if err != nil {
+		return errors.WithMessage(err, "Error upserting location")
+	}
+	return nil
+}
+
+func (conn DB) getUserID(update tgbotapi.Update) (int64, error) {
+	query := `SELECT id FROM users WHERE chatID = ?`
+	var id int64
+	err := conn.Conn.QueryRowContext(context.Background(), query, update.Message.Chat.ID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+	}
+	return id, nil
+}
