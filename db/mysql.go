@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"regexp"
+	"ride-together-bot/entity"
 	"strings"
 	"time"
 
@@ -15,15 +16,14 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
 	"ride-together-bot/domain"
-	"ride-together-bot/entitiy"
 )
 
 type DB struct {
 	Conn *sql.DB
 }
 
-func NewDataBase(ctx context.Context, dsn string) (*DB, error) {
-	db, err := sql.Open("mysql", dsn) // Use MySQL driver and connection string
+func NewDataBase(dsn string) (*DB, error) {
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v", err)
 		return nil, errors.WithMessage(err, "connection")
@@ -36,9 +36,9 @@ func NewDataBase(ctx context.Context, dsn string) (*DB, error) {
 	return &DB{Conn: db}, nil
 }
 
-func (conn DB) GetAllData(ctx context.Context) ([]entitiy.User, error) {
+func (conn DB) GetAllData(ctx context.Context) ([]entity.User, error) {
 	query := `SELECT name, phone, login, chatid FROM users`
-	data := make([]entitiy.User, 0)
+	data := make([]entity.User, 0)
 	rows, err := conn.Conn.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Error executing query")
@@ -46,7 +46,7 @@ func (conn DB) GetAllData(ctx context.Context) ([]entitiy.User, error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var user entitiy.User
+		var user entity.User
 		err := rows.Scan(&user.Name, &user.Phone, &user.Login, &user.ChatID)
 		if err != nil {
 			return nil, errors.WithMessage(err, "Error scanning data")
@@ -73,7 +73,7 @@ func latinOnly(name string) string {
 
 	return cleaned
 }
-func (conn DB) Registration(ctx context.Context, user entitiy.User, update tgbotapi.Update) error {
+func (conn DB) Registration(ctx context.Context, update tgbotapi.Update) error {
 	query := `INSERT INTO users (id, name, phone, login, chatid) VALUES (?, ?, ?, ?, ?)`
 	_, err := conn.Conn.ExecContext(ctx, query, rand.Int(), latinOnly(update.Message.Chat.FirstName), update.Message.Contact.PhoneNumber, update.Message.Chat.UserName, update.Message.Chat.ID)
 	if err != nil {
@@ -122,7 +122,7 @@ func (conn DB) getUserID(update tgbotapi.Update) (int64, error) {
 	err := conn.Conn.QueryRowContext(context.Background(), query, update.Message.Chat.ID).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil
+			return 0, errors.WithMessage(err, "Error getting user ID")
 		}
 	}
 	return id, nil

@@ -8,7 +8,6 @@ import (
 	"log"
 	"ride-together-bot/conf"
 	"ride-together-bot/db"
-	"ride-together-bot/entitiy"
 )
 
 type BotAPI struct {
@@ -39,10 +38,10 @@ func (bot BotAPI) requestContact(chatID int64) {
 }
 
 // Проверка принятого контакта
-func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.Update, user entitiy.User) {
+func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.Update) {
 	if update.Message.Contact != nil {
 		if update.Message.Contact.UserID == update.Message.From.ID {
-			err := bot.db.Registration(ctx, user, update)
+			err := bot.db.Registration(ctx, update)
 			if err != nil {
 				return
 			}
@@ -67,7 +66,6 @@ func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.
 
 func (bot BotAPI) SendSticker(stickerID string, update tgbotapi.Update) error {
 	stickerFile := tgbotapi.FileID(stickerID)
-
 	sticker := tgbotapi.NewSticker(update.Message.Chat.ID, stickerFile)
 	_, err := bot.API.Send(sticker)
 	if err != nil {
@@ -83,9 +81,22 @@ func (bot BotAPI) inlineContact(chatID int64) {
 	btn := tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonWebApp("my btn", webappInfo),
 	)
-
 	reply := tgbotapi.NewInlineKeyboardMarkup(btn)
 	msg := tgbotapi.NewMessage(chatID, "Кнопка")
+	msg.ReplyMarkup = reply
+	bot.API.Send(msg)
+}
+
+func (bot BotAPI) showMaps(chatID int64) {
+	// Формируем URL с параметром запроса с именем пользователя
+	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/maps.php?chatID=%d", chatID)
+	webappInfo := tgbotapi.WebAppInfo{URL: url}
+	btn := tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonWebApp("карты", webappInfo),
+	)
+
+	reply := tgbotapi.NewInlineKeyboardMarkup(btn)
+	msg := tgbotapi.NewMessage(chatID, "карты")
 	msg.ReplyMarkup = reply
 	bot.API.Send(msg)
 }
@@ -111,7 +122,7 @@ func (bot BotAPI) handleLocationUpdate(update tgbotapi.Update) error {
 	return nil
 }
 
-func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
+func (bot BotAPI) Updates(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.API.GetUpdatesChan(u)
@@ -128,7 +139,7 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
 			bot.requestContact(chatID)
 			for u := range updates {
-				bot.checkRequestContactReply(ctx, u, user)
+				bot.checkRequestContactReply(ctx, u)
 				break
 			}
 			continue
@@ -137,7 +148,6 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 		case "start":
 			msg.Text = "Привет, я бот для поиска попутчиков в любой системе каршеринга.\nПриятной экономии"
 			bot.API.Send(msg)
-
 		case "auth":
 			ok, err := bot.db.IsExists(ctx, update.Message.Chat.UserName)
 			if err != nil {
@@ -157,7 +167,7 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 			bot.API.Send(msg)
 			bot.requestContact(chatID)
 			for u := range updates {
-				bot.checkRequestContactReply(ctx, u, user)
+				bot.checkRequestContactReply(ctx, u)
 				break
 			}
 
@@ -166,7 +176,11 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 
 		case "find_ride":
 			bot.geolocationRequest(chatID)
+			for range updates {
+				bot.showMaps(chatID)
+			}
 		}
+
 		if update.Message.Location != nil {
 			err := bot.handleLocationUpdate(update)
 			if err != nil {
@@ -180,7 +194,7 @@ func (bot BotAPI) Updates(ctx context.Context, user entitiy.User) error {
 func main() {
 	ctx := context.Background()
 	// Инициализация базы данных
-	conn, err := db.NewDataBase(ctx, conf.DSN)
+	conn, err := db.NewDataBase(conf.DSN)
 	if err != nil {
 		log.Panic(errors.WithMessage(err, "ошибка инициализации БД"))
 	}
@@ -194,11 +208,8 @@ func main() {
 	// Создание экземпляра BotAPI
 	bot := NewBot(newBot, conn)
 
-	// Создание экземпляра пользователя
-	var user entitiy.User
-
 	// Запуск обновлений
-	err = bot.Updates(ctx, user)
+	err = bot.Updates(ctx)
 	if err != nil {
 		log.Panic(err)
 	}
