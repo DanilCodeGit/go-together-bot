@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"database/sql" // Import SQL package for MySQL
+	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
@@ -91,10 +91,9 @@ func (conn DB) IsExists(ctx context.Context, login string) (bool, error) {
 			// Record not found
 			return false, nil
 		}
-		// Error executing query
 		return false, errors.WithMessage(err, "Error checking if user exists")
 	}
-	// Record found
+
 	return true, nil
 }
 

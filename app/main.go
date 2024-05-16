@@ -8,6 +8,7 @@ import (
 	"log"
 	"ride-together-bot/conf"
 	"ride-together-bot/db"
+	"ride-together-bot/stickers"
 )
 
 type BotAPI struct {
@@ -48,7 +49,7 @@ func (bot BotAPI) checkRequestContactReply(ctx context.Context, update tgbotapi.
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Спасибо!")
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру
 			bot.API.Send(msg)
-			err = bot.SendSticker("CAACAgIAAxkBAAEL3MtmEnBdKVlozRT-Lm9SdbTUFGwaKQACNRMAAq07CEgEFLhcMipUIDQE", update)
+			err = bot.SendSticker(stickers.Cat, update)
 			if err != nil {
 				return
 			}
@@ -155,7 +156,7 @@ func (bot BotAPI) Updates(ctx context.Context) error {
 			}
 			if ok {
 				msg.Text = "Пользователь уже зарегистрирован"
-				err = bot.SendSticker("CAACAgIAAxkBAAEL3MlmEm_CzZTbjq297QhPpvUjGIDQ8gACTBQAAuxLAUh_I_vdpHUhwzQE", update)
+				err = bot.SendSticker(stickers.Shrek, update)
 				if err != nil {
 					return err
 				}
@@ -180,7 +181,6 @@ func (bot BotAPI) Updates(ctx context.Context) error {
 				bot.showMaps(chatID)
 			}
 		}
-
 		if update.Message.Location != nil {
 			err := bot.handleLocationUpdate(update)
 			if err != nil {
