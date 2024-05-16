@@ -35,7 +35,7 @@ func (bot BotAPI) requestContact(chatID int64) {
 	// Создаём клавиатуру
 	requestContactReplyKeyboard := tgbotapi.NewReplyKeyboard([]tgbotapi.KeyboardButton{acceptButton, declineButton})
 	requestContactMessage.ReplyMarkup = requestContactReplyKeyboard
-	bot.API.Send(requestContactMessage) // Отправляем сообщение
+	bot.API.Send(requestContactMessage)
 }
 
 // Проверка принятого контакта
@@ -89,7 +89,6 @@ func (bot BotAPI) inlineContact(chatID int64) {
 }
 
 func (bot BotAPI) showMaps(chatID int64) {
-	// Формируем URL с параметром запроса с именем пользователя
 	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/maps.php?chatID=%d", chatID)
 	webappInfo := tgbotapi.WebAppInfo{URL: url}
 	btn := tgbotapi.NewInlineKeyboardRow(
@@ -123,6 +122,23 @@ func (bot BotAPI) handleLocationUpdate(update tgbotapi.Update) error {
 	return nil
 }
 
+// Метод для ожидания следующего обновления определённого типа
+func (bot BotAPI) waitForUpdate(updates tgbotapi.UpdatesChannel, updateType string) tgbotapi.Update {
+	for update := range updates {
+		switch updateType {
+		case "contact":
+			if update.Message.Contact != nil {
+				return update
+			}
+		case "location":
+			if update.Message.Location != nil {
+				return update
+			}
+		}
+	}
+	return tgbotapi.Update{}
+}
+
 func (bot BotAPI) Updates(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -139,10 +155,8 @@ func (bot BotAPI) Updates(ctx context.Context) error {
 		if !ok {
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
 			bot.requestContact(chatID)
-			for u := range updates {
-				bot.checkRequestContactReply(ctx, u)
-				break
-			}
+			update = bot.waitForUpdate(updates, "contact")
+			bot.checkRequestContactReply(ctx, update)
 			continue
 		}
 		switch commands {
@@ -167,25 +181,23 @@ func (bot BotAPI) Updates(ctx context.Context) error {
 			msg.Text = "Регистрация пользователя"
 			bot.API.Send(msg)
 			bot.requestContact(chatID)
-			for u := range updates {
-				bot.checkRequestContactReply(ctx, u)
-				break
-			}
+			update = bot.waitForUpdate(updates, "contact")
+			bot.checkRequestContactReply(ctx, update)
 
 		case "create_event":
 			bot.inlineContact(chatID)
 
 		case "find_ride":
 			bot.geolocationRequest(chatID)
-			for range updates {
-				bot.showMaps(chatID)
-			}
-		}
-		if update.Message.Location != nil {
+			update = bot.waitForUpdate(updates, "location")
 			err := bot.handleLocationUpdate(update)
 			if err != nil {
 				return err
 			}
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Спасибо")
+			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру
+			bot.API.Send(msg)
+			bot.showMaps(chatID)
 		}
 	}
 	return nil
