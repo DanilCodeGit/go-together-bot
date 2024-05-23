@@ -7,7 +7,6 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
 	"ride-together-bot/bot"
-	botUtils "ride-together-bot/bot/utils"
 	"ride-together-bot/conf"
 	"ride-together-bot/db"
 )
@@ -28,14 +27,8 @@ func main() {
 		log.Panic(err)
 	}
 
-	// Initialize additional components needed for the bot
-	sticker := botUtils.NewSticker(instance)
-	maps := botUtils.NewMaps(instance)
-	contact := botUtils.NewContact(instance, conn, sticker)
-	location := botUtils.NewLocation(instance, conn)
-
 	// Create an instance of BotApi
-	botInstance := bot.NewBot(instance, conn, sticker, maps, contact, location)
+	botInstance := bot.NewBot(instance, conn)
 
 	// Start processing updates
 	if err := botInstance.Updates(ctx); err != nil {

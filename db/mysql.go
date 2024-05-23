@@ -126,3 +126,18 @@ func (conn DB) getUserID(update tgbotapi.Update) (int64, error) {
 	}
 	return id, nil
 }
+
+func (conn DB) IsDriver(ctx context.Context, update tgbotapi.Update) (bool, error) {
+	userId, err := conn.getUserID(update)
+	if err != nil {
+		return false, err
+	}
+
+	query := `SELECT COUNT(*) FROM events WHERE user_id = ?`
+	var count int
+	err = conn.Conn.QueryRowContext(ctx, query, userId).Scan(&count)
+	if err != nil {
+		return false, errors.WithMessage(err, "Error checking if user exists")
+	}
+	return count > 0, nil
+}

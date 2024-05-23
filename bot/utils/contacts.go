@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
-	"ride-together-bot/stickers"
 )
 
 type Contact struct {

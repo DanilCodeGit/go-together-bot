@@ -5,8 +5,8 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
 	bot "ride-together-bot/bot/utils"
+	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
-	"ride-together-bot/stickers"
 )
 
 type BotApi struct {
@@ -16,24 +16,24 @@ type BotApi struct {
 	maps     bot.Maps
 	contact  bot.Contact
 	location bot.Location
+	event    bot.Event
 }
 
-func NewBot(
-	api *tgbotapi.BotAPI,
-	db *db.DB,
-	sticker bot.Sticker,
-	maps *bot.Maps,
-	contact *bot.Contact,
-	location *bot.Location,
-) *BotApi {
+func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
+	newSticker := bot.NewSticker(api)
+	newMaps := bot.NewMaps(api)
+	newContant := bot.NewContact(api, db, newSticker)
+	newLocation := bot.NewLocation(api, db)
+	newEvent := bot.NewEvent(api, db)
 	api.Debug = true
 	return &BotApi{
 		api:      api,
 		db:       db,
-		sticker:  sticker,
-		maps:     *maps,
-		contact:  *contact,
-		location: *location,
+		sticker:  newSticker,
+		maps:     *newMaps,
+		contact:  *newContant,
+		location: *newLocation,
+		event:    *newEvent,
 	}
 }
 
@@ -100,6 +100,11 @@ func (bot BotApi) Updates(ctx context.Context) error {
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру
 			bot.api.Send(msg)
 			bot.maps.ShowMaps(chatID)
+		case "active_events":
+			err := bot.event.ActiveEvents(ctx, update)
+			if err != nil {
+				return errors.WithMessage(err, "get active events error")
+			}
 		}
 	}
 	return nil
