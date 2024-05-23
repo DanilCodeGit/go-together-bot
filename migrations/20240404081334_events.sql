@@ -10,6 +10,7 @@ CREATE TABLE events (
     car_number VARCHAR(20),
     user_id bigint unsigned,
     driver_name VARCHAR(50),
+    status bool default true,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 -- +goose Down
