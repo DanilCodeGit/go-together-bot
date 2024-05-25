@@ -36,26 +36,51 @@ func NewDataBase(dsn string) (*DB, error) {
 	return &DB{Conn: db}, nil
 }
 
-func (conn DB) GetAllData(ctx context.Context) ([]entity.User, error) {
-	query := `SELECT name, phone, login, chatid FROM users`
-	data := make([]entity.User, 0)
-	rows, err := conn.Conn.QueryContext(ctx, query)
+func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string) ([]entity.Event, error) {
+	query := `SELECT * FROM events WHERE departure_address = ?`
+	data := make([]entity.Event, 0)
+	rows, err := conn.Conn.QueryContext(ctx, query, departureAddress)
 	if err != nil {
-		return nil, errors.WithMessage(err, "Error executing query")
+		return nil, errors.WithMessage(err, "Ошибка выполнения запроса")
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var user entity.User
-		err := rows.Scan(&user.Name, &user.Phone, &user.Login, &user.ChatID)
+		var event entity.Event
+		var dateOfTrip []byte
+		err := rows.Scan(
+			&event.IDEvent,
+			&dateOfTrip,
+			&event.AvailableSeats,
+			&event.TripCost,
+			&event.CostPerPerson,
+			&event.DepartureAddress,
+			&event.ArrivalAddress,
+			&event.CarNumber,
+			&event.UserID,
+			&event.DriverName,
+			&event.Status,
+		)
 		if err != nil {
-			return nil, errors.WithMessage(err, "Error scanning data")
+			return nil, errors.WithMessage(err, "Ошибка сканирования данных")
 		}
-		data = append(data, user)
+
+		// Ручное преобразование dateOfTrip
+		if dateOfTrip != nil {
+			parsedDate, err := time.Parse("2006-01-02", string(dateOfTrip))
+			if err != nil {
+				return nil, errors.WithMessage(err, "Ошибка парсинга date_of_trip")
+			}
+			event.DateOfTrip = sql.NullTime{Time: parsedDate, Valid: true}
+		} else {
+			event.DateOfTrip = sql.NullTime{Valid: false}
+		}
+
+		data = append(data, event)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, errors.WithMessage(err, "Error retrieving data")
+		return nil, errors.WithMessage(err, "Ошибка извлечения данных")
 	}
 
 	return data, nil
@@ -98,7 +123,7 @@ func (conn DB) IsExists(ctx context.Context, login string) (bool, error) {
 }
 
 func (conn DB) UpsertLocation(update tgbotapi.Update) error {
-	userId, err := conn.getUserID(update)
+	userId, err := conn.GetUserID(update)
 	if err != nil {
 		return err
 	}
@@ -115,7 +140,7 @@ func (conn DB) UpsertLocation(update tgbotapi.Update) error {
 	return nil
 }
 
-func (conn DB) getUserID(update tgbotapi.Update) (int64, error) {
+func (conn DB) GetUserID(update tgbotapi.Update) (int64, error) {
 	query := `SELECT id FROM users WHERE chatID = ?`
 	var id int64
 	err := conn.Conn.QueryRowContext(context.Background(), query, update.Message.Chat.ID).Scan(&id)
@@ -128,7 +153,7 @@ func (conn DB) getUserID(update tgbotapi.Update) (int64, error) {
 }
 
 func (conn DB) IsDriver(ctx context.Context, update tgbotapi.Update) (bool, error) {
-	userId, err := conn.getUserID(update)
+	userId, err := conn.GetUserID(update)
 	if err != nil {
 		return false, err
 	}
@@ -140,4 +165,84 @@ func (conn DB) IsDriver(ctx context.Context, update tgbotapi.Update) (bool, erro
 		return false, errors.WithMessage(err, "Error checking if user exists")
 	}
 	return count > 0, nil
+}
+
+func (conn DB) GetLastLocation(ctx context.Context, user_id int64) (entity.Coordinates, error) {
+	query := `SELECT user_location.latitude, user_location.longitude
+            FROM user_location
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1`
+
+	var coordinates entity.Coordinates
+	_ = conn.Conn.QueryRowContext(ctx, query, user_id).Scan(&coordinates.Lat, &coordinates.Lon)
+
+	return coordinates, nil
+}
+
+func (conn DB) GetAllDepartureAddresses() ([]string, error) {
+	departures := make([]string, 0)
+	query := `select departure_address from events where status = 1`
+	rows, _ := conn.Conn.QueryContext(context.Background(), query)
+	defer rows.Close()
+	for rows.Next() {
+		var departureAddress string
+		err := rows.Scan(&departureAddress)
+		if err != nil {
+			return nil, errors.WithMessage(err, "Error scanning departure address")
+		}
+		departures = append(departures, departureAddress)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithMessage(err, "Error scanning departure address")
+	}
+	return departures, nil
+}
+
+func (conn DB) GetEventsID(chatID int64, update tgbotapi.Update) ([]int64, error) {
+	query := `select event_id FROM passengers WHERE user_chatID = ?`
+	ids := make([]int64, 0)
+	rows, err := conn.Conn.QueryContext(context.Background(), query, chatID)
+	if err != nil {
+		return nil, errors.WithMessage(err, "Error getting events ID")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		err := rows.Scan(&id)
+		if err != nil {
+			return nil, errors.WithMessage(err, "Error scanning events ID")
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithMessage(err, "rows Error scanning events ID")
+	}
+	if len(ids) == 0 {
+		return nil, errors.WithMessage(err, "events ID len == 0")
+	}
+	userID, _ := conn.GetUserID(update)
+	query = `select id_events FROM events WHERE user_id = ?`
+
+	rows, err = conn.Conn.QueryContext(context.Background(), query, userID)
+	if err != nil {
+		return nil, errors.WithMessage(err, "Error getting events ID")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		err := rows.Scan(&id)
+		if err != nil {
+			return nil, errors.WithMessage(err, "Error scanning events ID")
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithMessage(err, "rows Error scanning events ID")
+	}
+	if len(ids) == 0 {
+		return nil, errors.WithMessage(err, "events ID len == 0")
+	}
+
+	return ids, nil
 }

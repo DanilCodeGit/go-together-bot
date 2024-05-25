@@ -22,7 +22,7 @@ type BotApi struct {
 func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
 	newSticker := bot.NewSticker(api)
 	newMaps := bot.NewMaps(api)
-	newContant := bot.NewContact(api, db, newSticker)
+	newContact := bot.NewContact(api, db, newSticker)
 	newLocation := bot.NewLocation(api, db)
 	newEvent := bot.NewEvent(api, db)
 	api.Debug = true
@@ -31,7 +31,7 @@ func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
 		db:       db,
 		sticker:  newSticker,
 		maps:     *newMaps,
-		contact:  *newContant,
+		contact:  *newContact,
 		location: *newLocation,
 		event:    *newEvent,
 	}
@@ -39,8 +39,9 @@ func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
 
 func (bot BotApi) Updates(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+
 	updates := bot.api.GetUpdatesChan(u)
+
 	for update := range updates {
 		chatID := update.Message.Chat.ID
 		commands := update.Message.Command()
@@ -88,23 +89,36 @@ func (bot BotApi) Updates(ctx context.Context) error {
 		case "find_ride":
 			bot.location.GeolocationRequest(chatID)
 			update = bot.waitForUpdate(updates, "location")
-			err := bot.location.HandleLocationUpdate(update)
+			url, err := bot.location.HandleLocationUpdate(ctx, update)
 			if err != nil {
 				return errors.WithMessage(err, "handle location error")
 			}
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Спасибо")
-			err = bot.sticker.SendSticker(stickers.Location, update)
-			if err != nil {
-				return errors.WithMessage(err, "send sticker error")
-			}
-			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру
+			webappInfo := tgbotapi.WebAppInfo{URL: url}
+			btn := tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonWebApp("Список событий в радиусе 1км", webappInfo),
+			)
+			reply := tgbotapi.NewInlineKeyboardMarkup(btn)
+			msg := tgbotapi.NewMessage(chatID, "btn")
+			msg.ReplyMarkup = reply
 			bot.api.Send(msg)
-			bot.maps.ShowMaps(chatID)
 		case "active_events":
 			err := bot.event.ActiveEvents(ctx, update)
 			if err != nil {
 				return errors.WithMessage(err, "get active events error")
 			}
+		case "history":
+			url, err := bot.event.EventHistory(update)
+			if err != nil {
+				return errors.WithMessage(err, "get history error")
+			}
+			webappInfo := tgbotapi.WebAppInfo{URL: url}
+			btn := tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonWebApp("Ваша история поездок", webappInfo),
+			)
+			reply := tgbotapi.NewInlineKeyboardMarkup(btn)
+			msg := tgbotapi.NewMessage(chatID, "btn")
+			msg.ReplyMarkup = reply
+			bot.api.Send(msg)
 		}
 	}
 	return nil
