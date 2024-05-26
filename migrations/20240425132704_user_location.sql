@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE user_location (
+CREATE TABLE IF NOT EXISTS user_location (
                            id bigint AUTO_INCREMENT PRIMARY KEY,
                            user_id bigint unsigned NOT NULL,
                            latitude DECIMAL(10, 8) NOT NULL,

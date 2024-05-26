@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
     id_events serial PRIMARY KEY AUTO_INCREMENT ,
     date_of_trip DATE,
     available_seats INT,

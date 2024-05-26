@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id bigint unsigned auto_increment PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     phone VARCHAR(20) NOT NULL UNIQUE,
