@@ -13,7 +13,6 @@ type BotApi struct {
 	api      *tgbotapi.BotAPI
 	db       *db.DB
 	sticker  bot.Sticker
-	maps     bot.Maps
 	contact  bot.Contact
 	location bot.Location
 	event    bot.Event
@@ -21,16 +20,14 @@ type BotApi struct {
 
 func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
 	newSticker := bot.NewSticker(api)
-	newMaps := bot.NewMaps(api)
 	newContact := bot.NewContact(api, db, newSticker)
 	newLocation := bot.NewLocation(api, db)
-	newEvent := bot.NewEvent(api, db)
+	newEvent := bot.NewEvent(api, db, newSticker)
 	api.Debug = true
 	return &BotApi{
 		api:      api,
 		db:       db,
 		sticker:  newSticker,
-		maps:     *newMaps,
 		contact:  *newContact,
 		location: *newLocation,
 		event:    *newEvent,
@@ -84,7 +81,7 @@ func (bot BotApi) Updates(ctx context.Context) error {
 			bot.contact.CheckRequestContactReply(ctx, update)
 
 		case "create_event":
-			bot.contact.InlineContact(chatID)
+			bot.event.CreateEvent(chatID, update)
 
 		case "find_ride":
 			bot.location.GeolocationRequest(chatID)
@@ -94,12 +91,12 @@ func (bot BotApi) Updates(ctx context.Context) error {
 				return errors.WithMessage(err, "handle location error")
 			}
 			webappInfo := tgbotapi.WebAppInfo{URL: url}
-			btn := tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonWebApp("Список событий в радиусе 1км", webappInfo),
+			btn := tgbotapi.NewKeyboardButtonWebApp("Поездки", webappInfo)
+			keyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(btn),
 			)
-			reply := tgbotapi.NewInlineKeyboardMarkup(btn)
-			msg := tgbotapi.NewMessage(chatID, "btn")
-			msg.ReplyMarkup = reply
+			msg := tgbotapi.NewMessage(chatID, "Список поездок в радиусе 1км")
+			msg.ReplyMarkup = keyboard
 			bot.api.Send(msg)
 		case "active_events":
 			err := bot.event.ActiveEvents(ctx, update)
@@ -112,13 +109,14 @@ func (bot BotApi) Updates(ctx context.Context) error {
 				return errors.WithMessage(err, "get history error")
 			}
 			webappInfo := tgbotapi.WebAppInfo{URL: url}
-			btn := tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonWebApp("Ваша история поездок", webappInfo),
+			btn := tgbotapi.NewKeyboardButtonWebApp("История", webappInfo)
+			keyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(btn),
 			)
-			reply := tgbotapi.NewInlineKeyboardMarkup(btn)
-			msg := tgbotapi.NewMessage(chatID, "btn")
-			msg.ReplyMarkup = reply
+			msg := tgbotapi.NewMessage(chatID, "ㅤ")
+			msg.ReplyMarkup = keyboard
 			bot.api.Send(msg)
+			bot.sticker.SendSticker(stickers.Cat, update)
 		}
 	}
 	return nil

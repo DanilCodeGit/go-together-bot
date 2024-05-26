@@ -5,6 +5,7 @@ import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
+	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
 	"strconv"
 	"strings"
@@ -13,32 +14,47 @@ import (
 type Event struct {
 	api *tgbotapi.BotAPI
 	db  *db.DB
+	s   Sticker
 }
 
-func NewEvent(api *tgbotapi.BotAPI, db *db.DB) *Event {
+func NewEvent(api *tgbotapi.BotAPI, db *db.DB, s Sticker) *Event {
 	return &Event{
 		api: api,
 		db:  db,
+		s:   s,
 	}
+}
+
+func (e *Event) CreateEvent(chatID int64, update tgbotapi.Update) {
+	// Формируем URL с параметром запроса с именем пользователя
+	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/create_event_page.php?chatID=%d", chatID)
+	webappInfo := tgbotapi.WebAppInfo{URL: url}
+	btn := tgbotapi.NewKeyboardButtonWebApp("Создать поездку", webappInfo)
+	keyboard := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(btn),
+	)
+	msg := tgbotapi.NewMessage(chatID, "ㅤ")
+	msg.ReplyMarkup = keyboard
+	e.api.Send(msg)
+	e.s.SendSticker(stickers.CreateEvent, update)
 }
 
 func (e *Event) ActiveEvents(ctx context.Context, update tgbotapi.Update) error {
 	chatID := update.Message.Chat.ID
-	ok, err := e.db.IsDriver(ctx, update)
+	isDriver, err := e.db.IsDriver(ctx, update)
 	if err != nil {
 		return errors.WithMessage(err, "IsDriver")
 	}
-
-	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/driver_events.php?isDriver=%t&chatID=%d", ok, chatID)
+	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/driver_events.php?chatID=%d&isDriver=%v", chatID, isDriver)
 	webappInfo := tgbotapi.WebAppInfo{URL: url}
-	btn := tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonWebApp("Активные поездки", webappInfo),
+	btn := tgbotapi.NewKeyboardButtonWebApp("Активные поездки", webappInfo)
+	keyboard := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(btn),
 	)
-
-	reply := tgbotapi.NewInlineKeyboardMarkup(btn)
-	msg := tgbotapi.NewMessage(chatID, "Активные поездки")
-	msg.ReplyMarkup = reply
+	msg := tgbotapi.NewMessage(chatID, "ㅤ")
+	msg.ReplyMarkup = keyboard
 	e.api.Send(msg)
+	e.s.SendSticker(stickers.Cat, update)
 	return nil
 }
 

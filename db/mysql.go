@@ -67,7 +67,7 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 
 		// Ручное преобразование dateOfTrip
 		if dateOfTrip != nil {
-			parsedDate, err := time.Parse("2006-01-02", string(dateOfTrip))
+			parsedDate, err := time.Parse("2006-01-02 00:00:00", string(dateOfTrip))
 			if err != nil {
 				return nil, errors.WithMessage(err, "Ошибка парсинга date_of_trip")
 			}
