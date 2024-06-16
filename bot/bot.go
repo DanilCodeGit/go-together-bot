@@ -2,15 +2,16 @@ package bot
 
 import (
 	"context"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
+	"gopkg.in/telebot.v3"
+	"log"
 	bot "ride-together-bot/bot/utils"
 	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
 )
 
-type BotApi struct {
-	api      *tgbotapi.BotAPI
+type Api struct {
+	api      *telebot.Bot
 	db       *db.DB
 	sticker  bot.Sticker
 	contact  bot.Contact
@@ -18,13 +19,12 @@ type BotApi struct {
 	event    bot.Event
 }
 
-func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
+func NewBot(api *telebot.Bot, db *db.DB) *Api {
 	newSticker := bot.NewSticker(api)
 	newContact := bot.NewContact(api, db, newSticker)
-	newLocation := bot.NewLocation(api, db)
+	newLocation := bot.NewLocation(api, db, newSticker)
 	newEvent := bot.NewEvent(api, db, newSticker)
-	api.Debug = true
-	return &BotApi{
+	return &Api{
 		api:      api,
 		db:       db,
 		sticker:  newSticker,
@@ -34,99 +34,60 @@ func NewBot(api *tgbotapi.BotAPI, db *db.DB) *BotApi {
 	}
 }
 
-func (bot BotApi) Updates(ctx context.Context) error {
-	u := tgbotapi.NewUpdate(0)
+func (bot *Api) Start(ctx context.Context) {
+	bot.api.Handle("/start", bot.handleStart)
+	bot.api.Handle("/auth", bot.handleAuth(ctx))
+	bot.api.Handle("/new_ride", bot.handleNewRide)
+	bot.api.Handle("/find", bot.handleFind(ctx))
+	bot.api.Handle("/trips_management", bot.handleTripsManagement(ctx))
+	bot.api.Handle("/history", bot.handleHistory())
 
-	updates := bot.api.GetUpdatesChan(u)
+	bot.api.Start()
+}
 
-	for update := range updates {
-		chatID := update.Message.Chat.ID
-		commands := update.Message.Command()
-		msg := tgbotapi.NewMessage(chatID, update.Message.Text)
-
-		ok, err := bot.db.IsExists(ctx, update.Message.Chat.UserName)
-		if err != nil {
-			return errors.WithMessage(err, "is exists")
-		}
-		if !ok {
-			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
-			bot.contact.RequestContact(chatID)
-			update = bot.waitForUpdate(updates, "contact")
-			bot.contact.CheckRequestContactReply(ctx, update)
-			continue
-		}
-		switch commands {
-		case "start":
-			msg.Text = "Привет, я бот для поиска попутчиков в любой системе каршеринга.\nПриятной экономии"
-			bot.api.Send(msg)
-		case "auth":
-			ok, err := bot.db.IsExists(ctx, update.Message.Chat.UserName)
-			if err != nil {
-				return errors.WithMessage(err, "is exists")
-			}
-			if ok {
-				msg.Text = "Пользователь уже зарегистрирован"
-				err = bot.sticker.SendSticker(stickers.Shrek, update)
-				if err != nil {
-					return err
-				}
-				bot.api.Send(msg)
-				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false)
-				continue
-			}
-			msg.Text = "Регистрация пользователя"
-			bot.api.Send(msg)
-			bot.contact.RequestContact(chatID)
-			update = bot.waitForUpdate(updates, "contact")
-			bot.contact.CheckRequestContactReply(ctx, update)
-
-		case "create_event":
-			bot.event.CreateEvent(chatID, update)
-
-		case "find_ride":
-			bot.location.GeolocationRequest(chatID)
-			update = bot.waitForUpdate(updates, "location")
-			url, err := bot.location.HandleLocationUpdate(ctx, update)
-			if err != nil {
-				return errors.WithMessage(err, "handle location error")
-			}
-			webappInfo := tgbotapi.WebAppInfo{URL: url}
-			btn := tgbotapi.NewKeyboardButtonWebApp("Поездки", webappInfo)
-			keyboard := tgbotapi.NewReplyKeyboard(
-				tgbotapi.NewKeyboardButtonRow(btn),
-			)
-			msg := tgbotapi.NewMessage(chatID, "Список поездок в радиусе 1км")
-			msg.ReplyMarkup = keyboard
-			bot.api.Send(msg)
-		case "active_events":
-			err := bot.event.ActiveEvents(ctx, update)
-			if err != nil {
-				return errors.WithMessage(err, "get active events error")
-			}
-		case "history":
-			url, err := bot.event.EventHistory(update)
-			if err != nil {
-				return errors.WithMessage(err, "get history error")
-			}
-			webappInfo := tgbotapi.WebAppInfo{URL: url}
-			btn := tgbotapi.NewKeyboardButtonWebApp("История", webappInfo)
-			keyboard := tgbotapi.NewReplyKeyboard(
-				tgbotapi.NewKeyboardButtonRow(btn),
-			)
-			msg := tgbotapi.NewMessage(chatID, "ㅤ")
-			msg.ReplyMarkup = keyboard
-			bot.api.Send(msg)
-			bot.sticker.SendSticker(stickers.Cat, update)
-		}
+func (bot *Api) handleStart(c telebot.Context) error {
+	user := c.Sender()
+	msg := "Привет, я бот для поиска попутчиков в любой системе каршеринга.\nПриятной экономии"
+	if _, err := bot.api.Send(c.Sender(), msg); err != nil {
+		return errors.WithMessage(err, "handleStart")
 	}
+	return bot.sticker.SendSticker(user.ID, stickers.Start)
+}
+
+func (bot *Api) handleAuth(ctx context.Context) telebot.HandlerFunc {
+	return func(c telebot.Context) error {
+		chatID := c.Chat().ID
+		ok, err := bot.db.IsExists(ctx, c.Sender().Username)
+		if err != nil {
+			return errors.WithMessage(err, "ошибка проверки существования пользователя")
+		}
+		if ok {
+			c.Send("Пользователь уже зарегистрирован")
+			return bot.sticker.SendSticker(chatID, stickers.Shrek)
+		}
+		c.Send("Регистрация пользователя")
+		bot.contact.RequestContact(chatID)
+		update := bot.waitForUpdate(c.Bot(), "request_contact")
+		if update.Message.Contact == nil {
+			return errors.New("не удалось получить данные пользователя")
+		}
+
+		log.Printf("Получены данные о пользователе: %+v\n", update.Message.Contact)
+
+		bot.contact.CheckRequestContactReply(ctx, update.Message)
+		return nil
+	}
+}
+
+func (bot *Api) handleNewRide(c telebot.Context) error {
+	bot.event.CreateEvent(c.Chat().ID)
 	return nil
 }
 
-// Метод для ожидания следующего обновления определённого типа
-func (bot BotApi) waitForUpdate(updates tgbotapi.UpdatesChannel, updateType string) tgbotapi.Update {
-	for update := range updates {
+func (bot *Api) waitForUpdate(botUpd *telebot.Bot, updateType string) telebot.Update {
+	for update := range botUpd.Updates {
 		switch updateType {
-		case "contact":
+		case "request_contact":
 			if update.Message.Contact != nil {
 				return update
 			}
@@ -136,5 +97,56 @@ func (bot BotApi) waitForUpdate(updates tgbotapi.UpdatesChannel, updateType stri
 			}
 		}
 	}
-	return tgbotapi.Update{}
+	return telebot.Update{}
+}
+
+func (bot *Api) handleFind(ctx context.Context) telebot.HandlerFunc {
+	return func(c telebot.Context) error {
+		bot.location.GeolocationRequest(c.Chat().ID)
+
+		log.Println("Ожидание обновления с геолокацией...")
+
+		update := bot.waitForUpdate(c.Bot(), "location")
+		if update.Message.Location == nil {
+			return errors.New("не удалось получить геолокацию")
+		}
+
+		log.Printf("Получено местоположение: %+v\n", update.Message.Location)
+
+		url, err := bot.location.HandleLocationUpdate(ctx, update.Message)
+		if err != nil {
+			return errors.WithMessage(err, "ошибка обработки местоположения")
+		}
+
+		webappInfo := &telebot.WebApp{URL: url}
+		btn := telebot.Btn{Text: "Поездки", WebApp: webappInfo}
+		keyboard := &telebot.ReplyMarkup{ResizeKeyboard: true}
+		keyboard.Reply(keyboard.Row(btn))
+
+		return c.Send("Список поездок в радиусе 1км", keyboard)
+	}
+}
+
+func (bot *Api) handleTripsManagement(ctx context.Context) telebot.HandlerFunc {
+	return func(c telebot.Context) error {
+		return bot.event.TripsManagement(ctx, c.Message())
+	}
+}
+
+func (bot *Api) handleHistory() telebot.HandlerFunc {
+	return func(c telebot.Context) error {
+		usr := c.Sender()
+		url, err := bot.event.EventHistory(c.Message())
+		if err != nil {
+			return errors.WithMessage(err, "ошибка получения истории событий")
+		}
+		webappInfo := &telebot.WebApp{URL: url}
+		btn := telebot.Btn{Text: "История", WebApp: webappInfo}
+		keyboard := &telebot.ReplyMarkup{ResizeKeyboard: true}
+		keyboard.Reply(keyboard.Row(btn))
+		if err := c.Send("ㅤ", keyboard); err != nil {
+			return err
+		}
+		return bot.sticker.SendSticker(usr.ID, stickers.Cat)
+	}
 }

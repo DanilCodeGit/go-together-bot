@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
+	"gopkg.in/telebot.v3"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
 	"ride-together-bot/conf"
+	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
 	"ride-together-bot/entity"
 	"strconv"
@@ -18,48 +19,52 @@ import (
 )
 
 type Location struct {
-	api *tgbotapi.BotAPI
+	api *telebot.Bot
 	db  *db.DB
+	s   Sticker
 }
 
-func NewLocation(api *tgbotapi.BotAPI, db *db.DB) *Location {
+func NewLocation(api *telebot.Bot, db *db.DB, s Sticker) *Location {
 	return &Location{
 		api: api,
 		db:  db,
+		s:   s,
 	}
 }
 
+// GeolocationRequest sends a location request to the user
 func (l Location) GeolocationRequest(chatID int64) {
-	btn := tgbotapi.NewKeyboardButtonLocation("запрос геолокации")
-	keyboard := tgbotapi.NewReplyKeyboard([]tgbotapi.KeyboardButton{btn})
-	msg := tgbotapi.NewMessage(chatID, "Отправьте вашу геолокацию")
-	msg.ReplyMarkup = keyboard
-	l.api.Send(msg)
+	btn := telebot.Btn{Text: "Запрос геолокации", Location: true}
+	keyboard := telebot.ReplyMarkup{ResizeKeyboard: true}
+	keyboard.Reply(keyboard.Row(btn))
+	l.api.Send(telebot.ChatID(chatID), "Пожалуйста, предоставьте свою геолокацию", &keyboard)
+	l.s.SendSticker(chatID, stickers.Location)
 }
 
-func (l Location) HandleLocationUpdate(ctx context.Context, update tgbotapi.Update) (string, error) {
+// HandleLocationUpdate handles the user's location update and returns a URL for displaying events on a map
+func (l Location) HandleLocationUpdate(ctx context.Context, message *telebot.Message) (string, error) {
 	okAddresses := make([]string, 0)
 	okEvents := make([]entity.Event, 0)
-	chatID := update.Message.Chat.ID
-	var url string
-	if update.Message.Location != nil {
-		latitude := update.Message.Location.Latitude
-		longitude := update.Message.Location.Longitude
+	chatID := message.Chat.ID
+	var u string
+
+	if message.Location != nil {
+		latitude := message.Location.Lat
+		longitude := message.Location.Lng
 		log.Printf("latitude: %f, longitude: %f", latitude, longitude)
-		err := l.db.UpsertLocation(update)
+		err := l.db.UpsertLocation(message)
 		if err != nil {
 			return "", errors.WithMessage(err, "insert l error")
 		}
 
-		departureAddress, _ := l.db.GetAllDepartureAddresses()
-		for _, address := range departureAddress {
+		departureAddresses, _ := l.db.GetAllDepartureAddresses()
+		for _, address := range departureAddresses {
 			coordinates, err := l.GetCoordinates(address)
 			if err != nil {
 				log.Printf("get coordinates error: %e", err)
 				continue
 			}
-			ok := l.IsPointInCircle(latitude, longitude, coordinates.Lat, coordinates.Lon)
-			if ok {
+			if l.IsPointInCircle(latitude, longitude, float32(coordinates.Lat), float32(coordinates.Lon)) {
 				okAddresses = append(okAddresses, address)
 			}
 		}
@@ -75,66 +80,57 @@ func (l Location) HandleLocationUpdate(ctx context.Context, update tgbotapi.Upda
 			eventIDs[i] = strconv.Itoa(event.IDEvent)
 		}
 		eventIDsParam := strings.Join(eventIDs, ",")
-		url = fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/maps.php?chat_id=%v&id_events=%s", chatID, eventIDsParam)
+		u = fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/maps.php?chat_id=%v&id_events=%s", telebot.ChatID(chatID), eventIDsParam)
 	}
-	return url, nil
+	return u, nil
 }
 
-/////////// Попадание точки в заданный радиус
-
-// isPointInCircle проверяет, находится ли точка в круге радиусом 1 км от заданной координаты
-func (l Location) IsPointInCircle(centerLat, centerLon, pointLat, pointLon float64) bool {
+// IsPointInCircle checks if a point is within a 1 km radius of a given coordinate
+func (l Location) IsPointInCircle(centerLat, centerLon, pointLat, pointLon float32) bool {
 	distance := l.haversine(centerLat, centerLon, pointLat, pointLon)
 	return distance <= 1
 }
 
-// toRadians преобразует градусы в радианы
-func (l Location) toRadians(deg float64) float64 {
+// toRadians converts degrees to radians
+func (l Location) toRadians(deg float32) float32 {
 	return deg * math.Pi / 180
 }
 
-// haversine вычисляет расстояние между двумя точками на поверхности Земли
-func (l Location) haversine(lat1, lon1, lat2, lon2 float64) float64 {
+// haversine calculates the distance between two points on the Earth's surface
+func (l Location) haversine(lat1, lon1, lat2, lon2 float32) float32 {
 	dLat := l.toRadians(lat2 - lat1)
 	dLon := l.toRadians(lon2 - lon1)
 
 	lat1 = l.toRadians(lat1)
 	lat2 = l.toRadians(lat2)
 
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(lat1)*math.Cos(lat2)
+	a := math.Sin(float64(dLat/2))*math.Sin(float64(dLat/2)) +
+		math.Sin(float64(dLon/2))*math.Sin(float64(dLon/2))*math.Cos(float64(lat1))*math.Cos(float64(lat2))
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
-	return conf.EarthRadius * c
+	return float32(conf.EarthRadius * c)
 }
-
-////////////////////// Геокодер
 
 type Coordinates struct {
 	Lat float64 `json:"lat,string"`
 	Lon float64 `json:"lon,string"`
 }
 
-// getCoordinates получает координаты по адресу с использованием Nominatim API
+// GetCoordinates gets coordinates by address using Nominatim API
 func (l Location) GetCoordinates(address string) (*Coordinates, error) {
-	// Кодируем адрес для использования в URL
 	encodedAddress := url.QueryEscape(address)
-	// Формируем URL для запроса к Nominatim API
 	apiURL := fmt.Sprintf("https://nominatim.openstreetmap.org/search?format=json&q=%s", encodedAddress)
 
-	// Выполняем HTTP GET запрос
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при выполнении запроса: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Проверяем статус код ответа
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("неожиданный статус код: %d", resp.StatusCode)
 	}
 
-	// Декодируем ответ
 	var results []struct {
 		Lat string `json:"lat"`
 		Lon string `json:"lon"`
@@ -143,13 +139,10 @@ func (l Location) GetCoordinates(address string) (*Coordinates, error) {
 		return nil, fmt.Errorf("ошибка при декодировании ответа: %v", err)
 	}
 
-	// Проверяем, есть ли результаты
 	if len(results) == 0 {
-		//log.Printf("координаты не найдены для адреса: %s", address)
 		return nil, fmt.Errorf("координаты не найдены для адреса: %s", address)
 	}
 
-	// Парсим широту и долготу
 	lat, err := strconv.ParseFloat(results[0].Lat, 64)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при парсинге широты: %v", err)
