@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"gopkg.in/telebot.v3"
 	"log"
 	"math/rand"
 	"os"
@@ -13,7 +14,6 @@ import (
 
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
 	"ride-together-bot/domain"
 )
@@ -28,7 +28,8 @@ func NewDataBase(dsn string) (*DB, error) {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v", err)
 		return nil, errors.WithMessage(err, "connection")
 	}
-	if err := db.Ping(); err != nil {
+	err = db.Ping()
+	if err != nil {
 		return nil, errors.WithMessage(err, "Error pinging database")
 	}
 	log.Println("Successful database connection")
@@ -48,12 +49,13 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 	for rows.Next() {
 		var event entity.Event
 		var dateOfTrip []byte
+		var costPerPerson sql.NullFloat64 // Используем sql.NullFloat64 для costPerPerson
 		err := rows.Scan(
 			&event.IDEvent,
 			&dateOfTrip,
 			&event.AvailableSeats,
 			&event.TripCost,
-			&event.CostPerPerson,
+			&costPerPerson, // Сканируем в sql.NullFloat64
 			&event.DepartureAddress,
 			&event.ArrivalAddress,
 			&event.CarNumber,
@@ -67,7 +69,7 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 
 		// Ручное преобразование dateOfTrip
 		if dateOfTrip != nil {
-			parsedDate, err := time.Parse("2006-01-02 00:00:00", string(dateOfTrip))
+			parsedDate, err := time.Parse("2006-01-02 15:04:05", string(dateOfTrip))
 			if err != nil {
 				return nil, errors.WithMessage(err, "Ошибка парсинга date_of_trip")
 			}
@@ -75,6 +77,14 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 		} else {
 			event.DateOfTrip = sql.NullTime{Valid: false}
 		}
+
+		// Проверка на нулевую или NULL стоимость на человека
+		if !costPerPerson.Valid || costPerPerson.Float64 == 0 {
+			event.CostPerPerson = 0
+		}
+
+		// Присваиваем значение из sql.NullFloat64 в обычное поле структуры Event
+		event.CostPerPerson = float32(costPerPerson.Float64)
 
 		data = append(data, event)
 	}
@@ -98,9 +108,10 @@ func latinOnly(name string) string {
 
 	return cleaned
 }
-func (conn DB) Registration(ctx context.Context, update tgbotapi.Update) error {
+
+func (conn DB) Registration(ctx context.Context, message *telebot.Message) error {
 	query := `INSERT INTO users (id, name, phone, login, chatid) VALUES (?, ?, ?, ?, ?)`
-	_, err := conn.Conn.ExecContext(ctx, query, rand.Int(), latinOnly(update.Message.Chat.FirstName), update.Message.Contact.PhoneNumber, update.Message.Chat.UserName, update.Message.Chat.ID)
+	_, err := conn.Conn.ExecContext(ctx, query, rand.Int(), latinOnly(message.Sender.FirstName), message.Contact.PhoneNumber, message.Sender.Username, message.Chat.ID)
 	if err != nil {
 		return errors.WithMessage(err, "Registration error")
 	}
@@ -122,10 +133,10 @@ func (conn DB) IsExists(ctx context.Context, login string) (bool, error) {
 	return true, nil
 }
 
-func (conn DB) UpsertLocation(update tgbotapi.Update) error {
-	userId, err := conn.GetUserID(update)
+func (conn DB) UpsertLocation(message *telebot.Message) error {
+	userId, err := conn.GetUserID(message)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "get user id")
 	}
 
 	query := `INSERT INTO user_location (user_id, latitude, longitude, created_at) 
@@ -133,17 +144,17 @@ func (conn DB) UpsertLocation(update tgbotapi.Update) error {
                ON DUPLICATE KEY UPDATE user_id = values(user_id)`
 
 	_, err = conn.Conn.ExecContext(context.Background(), query,
-		userId, update.Message.Location.Latitude, update.Message.Location.Longitude, time.Now())
+		userId, message.Location.Lat, message.Location.Lng, time.Now())
 	if err != nil {
 		return errors.WithMessage(err, "Error upserting location")
 	}
 	return nil
 }
 
-func (conn DB) GetUserID(update tgbotapi.Update) (int64, error) {
+func (conn DB) GetUserID(message *telebot.Message) (int64, error) {
 	query := `SELECT id FROM users WHERE chatID = ?`
 	var id int64
-	err := conn.Conn.QueryRowContext(context.Background(), query, update.Message.Chat.ID).Scan(&id)
+	err := conn.Conn.QueryRowContext(context.Background(), query, message.Chat.ID).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, errors.WithMessage(err, "Error getting user ID")
@@ -152,8 +163,8 @@ func (conn DB) GetUserID(update tgbotapi.Update) (int64, error) {
 	return id, nil
 }
 
-func (conn DB) IsDriver(ctx context.Context, update tgbotapi.Update) (bool, error) {
-	userId, err := conn.GetUserID(update)
+func (conn DB) IsDriver(ctx context.Context, message *telebot.Message) (bool, error) {
+	userId, err := conn.GetUserID(message)
 	if err != nil {
 		return false, err
 	}
@@ -167,7 +178,7 @@ func (conn DB) IsDriver(ctx context.Context, update tgbotapi.Update) (bool, erro
 	return count > 0, nil
 }
 
-func (conn DB) GetLastLocation(ctx context.Context, user_id int64) (entity.Coordinates, error) {
+func (conn DB) GetLastLocation(ctx context.Context, userId int64) (entity.Coordinates, error) {
 	query := `SELECT user_location.latitude, user_location.longitude
             FROM user_location
             WHERE user_id = ?
@@ -175,7 +186,7 @@ func (conn DB) GetLastLocation(ctx context.Context, user_id int64) (entity.Coord
             LIMIT 1`
 
 	var coordinates entity.Coordinates
-	_ = conn.Conn.QueryRowContext(ctx, query, user_id).Scan(&coordinates.Lat, &coordinates.Lon)
+	_ = conn.Conn.QueryRowContext(ctx, query, userId).Scan(&coordinates.Lat, &coordinates.Lon)
 
 	return coordinates, nil
 }
@@ -199,7 +210,7 @@ func (conn DB) GetAllDepartureAddresses() ([]string, error) {
 	return departures, nil
 }
 
-func (conn DB) GetEventsID(chatID int64, update tgbotapi.Update) ([]int64, error) {
+func (conn DB) GetEventsID(chatID int64, message *telebot.Message) ([]int64, error) {
 	query := `select event_id FROM passengers WHERE user_chatID = ?`
 	ids := make([]int64, 0)
 	rows, err := conn.Conn.QueryContext(context.Background(), query, chatID)
@@ -221,7 +232,7 @@ func (conn DB) GetEventsID(chatID int64, update tgbotapi.Update) ([]int64, error
 	if len(ids) == 0 {
 		return nil, errors.WithMessage(err, "events ID len == 0")
 	}
-	userID, _ := conn.GetUserID(update)
+	userID, _ := conn.GetUserID(message)
 	query = `select id_events FROM events WHERE user_id = ?`
 
 	rows, err = conn.Conn.QueryContext(context.Background(), query, userID)

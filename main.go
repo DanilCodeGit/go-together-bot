@@ -3,51 +3,56 @@ package main
 import (
 	"context"
 	"embed"
-	"log"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
+	"github.com/pressly/goose/v3"
+	tele "gopkg.in/telebot.v3"
+	"log"
 	"ride-together-bot/bot"
 	"ride-together-bot/conf"
 	"ride-together-bot/db"
-
-	"github.com/pressly/goose/v3"
 )
 
 //go:embed migrations/*.sql
 var embedMigrations embed.FS
 
 func main() {
-	// Create a background context
 	ctx := context.Background()
+	cfg := conf.NewConfig()
 
-	// Initialize the database connection
-	dataBase, err := db.NewDataBase(conf.DSN)
+	dataBase, err := db.NewDataBase(cfg.DSN.DSNLocal)
 	if err != nil {
+		log.Println(cfg.DSN.DSNLocal)
 		log.Panic(errors.WithMessage(err, "ошибка инициализации БД"))
 	}
 
-	// Run migrations
 	goose.SetBaseFS(embedMigrations)
 
-	if err := goose.SetDialect("mysql"); err != nil {
+	err = goose.SetDialect("mysql")
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := goose.Up(dataBase.Conn, "migrations"); err != nil {
+	err = goose.Up(dataBase.Conn, "migrations")
+	if err != nil {
 		log.Fatal("goose up: ", err)
 	}
-	// Initialize the bot API instance
-	instance, err := tgbotapi.NewBotAPI(conf.TelegramBotApiKey)
-	if err != nil {
-		log.Panic(err)
+
+	pref := tele.Settings{
+		Token: cfg.TelegramBotApiKey,
+		Poller: &tele.LongPoller{
+			LastUpdateID: 0,
+		},
+		//Verbose: true,
 	}
 
-	// Create an instance of BotApi
-	botInstance := bot.NewBot(instance, dataBase)
+	b, err := tele.NewBot(pref)
+	if err != nil {
+		log.Fatal(errors.WithMessage(err, "create telegram bot"))
+		return
+	}
+
+	botInstance := bot.NewBot(cfg, b, dataBase)
 
 	// Start processing updates
-	if err := botInstance.Updates(ctx); err != nil {
-		log.Panic(err)
-	}
+	botInstance.Start(ctx)
 }

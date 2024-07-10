@@ -1,24 +1,23 @@
 package bot
 
 import (
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/pkg/errors"
+	"gopkg.in/telebot.v3"
 )
 
 type Sticker struct {
-	api *tgbotapi.BotAPI
+	api *telebot.Bot
 }
 
-func NewSticker(api *tgbotapi.BotAPI) Sticker {
+func NewSticker(api *telebot.Bot) Sticker {
 	return Sticker{
 		api: api,
 	}
 }
 
-func (sticker Sticker) SendSticker(stickerID string, update tgbotapi.Update) error {
-	stickerFile := tgbotapi.FileID(stickerID)
-	stickers := tgbotapi.NewSticker(update.Message.Chat.ID, stickerFile)
-	_, err := sticker.api.Send(stickers)
+func (sticker Sticker) SendSticker(chatID int64, stickerID string) error {
+	stickerFile := &telebot.Sticker{File: telebot.File{FileID: stickerID}}
+	_, err := sticker.api.Send(telebot.ChatID(chatID), stickerFile)
 	if err != nil {
 		return errors.WithMessage(err, "sticker error")
 	}
