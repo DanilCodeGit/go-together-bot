@@ -4,6 +4,7 @@ import (
 	"database/sql"
 )
 
+// nolint:tagliatelle
 type Event struct {
 	IDEvent          int          `json:"id_event"`
 	DateOfTrip       sql.NullTime `json:"date_of_trip"`

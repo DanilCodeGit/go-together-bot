@@ -5,29 +5,33 @@ import (
 	"fmt"
 	"github.com/pkg/errors"
 	"gopkg.in/telebot.v3"
+	"ride-together-bot/conf"
 	"ride-together-bot/conf/stickers"
 	"ride-together-bot/db"
+	"ride-together-bot/entity"
 	"strconv"
 	"strings"
 )
 
 type Event struct {
-	api *telebot.Bot
-	db  *db.DB
-	s   Sticker
+	conf *conf.Config
+	api  *telebot.Bot
+	db   *db.DB
+	s    Sticker
 }
 
-func NewEvent(api *telebot.Bot, db *db.DB, s Sticker) *Event {
+func NewEvent(conf *conf.Config, api *telebot.Bot, db *db.DB, s Sticker) *Event {
 	return &Event{
-		api: api,
-		db:  db,
-		s:   s,
+		conf: conf,
+		api:  api,
+		db:   db,
+		s:    s,
 	}
 }
 
-func (e *Event) CreateEvent(chatID int64) {
+func (e *Event) CreateEvent(chatID int64) error {
 	// Формируем URL с параметром запроса с именем пользователя
-	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/create_event_page.php?chatID=%d", chatID)
+	url := fmt.Sprintf("%s?chatID=%d", e.conf.URLs.CreateEventPage, chatID)
 
 	// Создаем кнопку для открытия webapp
 	btn := telebot.ReplyButton{
@@ -43,11 +47,15 @@ func (e *Event) CreateEvent(chatID int64) {
 	// Отправляем сообщение с клавиатурой
 	_, err := e.api.Send(telebot.ChatID(chatID), "ㅤ", &keyboard)
 	if err != nil {
-		fmt.Printf("Error sending message: %v\n", err)
+		_ = fmt.Errorf("Error sending message: %v\n", err)
 	}
 
 	// Отправляем стикер
-	e.s.SendSticker(chatID, stickers.CreateEvent)
+	err = e.s.SendSticker(chatID, stickers.CreateEvent)
+	if err != nil {
+		return entity.ErrSendSticker
+	}
+	return nil
 }
 
 func (e *Event) TripsManagement(ctx context.Context, message *telebot.Message) error {
@@ -56,7 +64,8 @@ func (e *Event) TripsManagement(ctx context.Context, message *telebot.Message) e
 	if err != nil {
 		return errors.WithMessage(err, "IsDriver")
 	}
-	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/driver_events.php?chatID=%d&isDriver=%v", chatID, isDriver)
+
+	url := fmt.Sprintf("%s?chatID=%d&isDriver=%v", e.conf.URLs.DriverEvents, chatID, isDriver)
 	webappInfo := &telebot.WebApp{URL: url}
 	btn := telebot.Btn{Text: "Менеджер поездок", WebApp: webappInfo}
 	keyboard := &telebot.ReplyMarkup{ResizeKeyboard: true}
@@ -70,6 +79,10 @@ func (e *Event) TripsManagement(ctx context.Context, message *telebot.Message) e
 	}
 
 	err = e.s.SendSticker(chatID, stickers.Cat)
+	if err != nil {
+		return entity.ErrSendSticker
+	}
+
 	return nil
 }
 
@@ -79,17 +92,21 @@ func (e *Event) EventHistory(message *telebot.Message) (string, error) {
 	if err != nil {
 		return "", errors.WithMessage(err, "GetEventsID")
 	}
+
 	uniqueIds := make(map[int]struct{}, len(ids))
 	for _, id := range ids {
 		uniqueIds[int(id)] = struct{}{}
 	}
+
 	strIds := make([]string, len(uniqueIds))
 	idx := 0
 	for id := range uniqueIds {
 		strIds[idx] = strconv.Itoa(id)
 		idx++
 	}
+
 	eventIDsParam := strings.Join(strIds, ",")
-	url := fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/events_history.php?chat_id=%v&id_events=%s", chatID, eventIDsParam)
+	url := fmt.Sprintf("%s?chat_id=%v&id_events=%s", e.conf.URLs.EventsHistory, chatID, eventIDsParam)
+
 	return url, nil
 }

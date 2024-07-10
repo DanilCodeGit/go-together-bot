@@ -19,26 +19,38 @@ import (
 )
 
 type Location struct {
-	api *telebot.Bot
-	db  *db.DB
-	s   Sticker
+	api  *telebot.Bot
+	db   *db.DB
+	s    Sticker
+	conf *conf.Config
 }
 
-func NewLocation(api *telebot.Bot, db *db.DB, s Sticker) *Location {
+func NewLocation(api *telebot.Bot, db *db.DB, s Sticker, conf *conf.Config) *Location {
 	return &Location{
-		api: api,
-		db:  db,
-		s:   s,
+		api:  api,
+		db:   db,
+		s:    s,
+		conf: conf,
 	}
 }
 
 // GeolocationRequest sends a location request to the user
-func (l Location) GeolocationRequest(chatID int64) {
+func (l Location) GeolocationRequest(chatID int64) error {
 	btn := telebot.Btn{Text: "Запрос геолокации", Location: true}
 	keyboard := telebot.ReplyMarkup{ResizeKeyboard: true}
 	keyboard.Reply(keyboard.Row(btn))
-	l.api.Send(telebot.ChatID(chatID), "Пожалуйста, предоставьте свою геолокацию", &keyboard)
-	l.s.SendSticker(chatID, stickers.Location)
+
+	_, err := l.api.Send(telebot.ChatID(chatID), "Пожалуйста, предоставьте свою геолокацию", &keyboard)
+	if err != nil {
+		return entity.ErrSendMsg
+	}
+
+	err = l.s.SendSticker(chatID, stickers.Location)
+	if err != nil {
+		return entity.ErrSendSticker
+	}
+
+	return nil
 }
 
 // HandleLocationUpdate handles the user's location update and returns a URL for displaying events on a map
@@ -80,7 +92,7 @@ func (l Location) HandleLocationUpdate(ctx context.Context, message *telebot.Mes
 			eventIDs[i] = strconv.Itoa(event.IDEvent)
 		}
 		eventIDsParam := strings.Join(eventIDs, ",")
-		u = fmt.Sprintf("https://cr50181-wordpress-j3047.tw1.ru/maps.php?chat_id=%v&id_events=%s", telebot.ChatID(chatID), eventIDsParam)
+		u = fmt.Sprintf("%s?chat_id=%v&id_events=%s", l.conf.URLs.Maps, telebot.ChatID(chatID), eventIDsParam)
 	}
 	return u, nil
 }
@@ -108,7 +120,7 @@ func (l Location) haversine(lat1, lon1, lat2, lon2 float32) float32 {
 		math.Sin(float64(dLon/2))*math.Sin(float64(dLon/2))*math.Cos(float64(lat1))*math.Cos(float64(lat2))
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
-	return float32(conf.EarthRadius * c)
+	return float32(l.conf.EarthRadius * c)
 }
 
 type Coordinates struct {
@@ -119,23 +131,26 @@ type Coordinates struct {
 // GetCoordinates gets coordinates by address using Nominatim API
 func (l Location) GetCoordinates(address string) (*Coordinates, error) {
 	encodedAddress := url.QueryEscape(address)
-	apiURL := fmt.Sprintf("https://nominatim.openstreetmap.org/search?format=json&q=%s", encodedAddress)
 
-	resp, err := http.Get(apiURL)
+	apiURL := l.conf.OpenStreetMap + encodedAddress
+
+	resp, err := http.Get(apiURL) //nolint: gosec, noctx
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при выполнении запроса: %v", err)
+		return nil, entity.ErrResponse
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("неожиданный статус код: %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: %d", entity.ErrStatusCode, resp.StatusCode)
 	}
 
 	var results []struct {
 		Lat string `json:"lat"`
 		Lon string `json:"lon"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&results)
+	if err != nil {
 		return nil, fmt.Errorf("ошибка при декодировании ответа: %v", err)
 	}
 

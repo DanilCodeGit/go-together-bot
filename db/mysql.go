@@ -28,7 +28,8 @@ func NewDataBase(dsn string) (*DB, error) {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v", err)
 		return nil, errors.WithMessage(err, "connection")
 	}
-	if err := db.Ping(); err != nil {
+	err = db.Ping()
+	if err != nil {
 		return nil, errors.WithMessage(err, "Error pinging database")
 	}
 	log.Println("Successful database connection")
@@ -48,12 +49,13 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 	for rows.Next() {
 		var event entity.Event
 		var dateOfTrip []byte
+		var costPerPerson sql.NullFloat64 // Используем sql.NullFloat64 для costPerPerson
 		err := rows.Scan(
 			&event.IDEvent,
 			&dateOfTrip,
 			&event.AvailableSeats,
 			&event.TripCost,
-			&event.CostPerPerson,
+			&costPerPerson, // Сканируем в sql.NullFloat64
 			&event.DepartureAddress,
 			&event.ArrivalAddress,
 			&event.CarNumber,
@@ -75,6 +77,14 @@ func (conn DB) GetAllDataFromEvents(ctx context.Context, departureAddress string
 		} else {
 			event.DateOfTrip = sql.NullTime{Valid: false}
 		}
+
+		// Проверка на нулевую или NULL стоимость на человека
+		if !costPerPerson.Valid || costPerPerson.Float64 == 0 {
+			event.CostPerPerson = 0
+		}
+
+		// Присваиваем значение из sql.NullFloat64 в обычное поле структуры Event
+		event.CostPerPerson = float32(costPerPerson.Float64)
 
 		data = append(data, event)
 	}
@@ -126,7 +136,7 @@ func (conn DB) IsExists(ctx context.Context, login string) (bool, error) {
 func (conn DB) UpsertLocation(message *telebot.Message) error {
 	userId, err := conn.GetUserID(message)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "get user id")
 	}
 
 	query := `INSERT INTO user_location (user_id, latitude, longitude, created_at) 
